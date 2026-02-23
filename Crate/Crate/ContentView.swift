@@ -1,136 +1,220 @@
-//
-//  ContentView.swift
-//  Crate
-//
-//  Created by Jude Wilson (Bethel) on 8/2/25.
-//
-
-// 🌋 PullAlpineTestView.swift
-
-// CratePullAlpine.swift
-
-// CratePullAlpine.swift
-
 import SwiftUI
-import Containerization
-import ContainerizationOCI
-import ContainerizationExtras
-import ContainerizationArchive
-import ContainerizationOS
 
-@MainActor
-class AlpinePuller: ObservableObject {
-    @Published var logs: String = ""
-    @Published var isBusy = false
+struct ContainerSummary: Identifiable {
+    enum Status: String, CaseIterable {
+        case running
+        case stopped
+        case error
 
-    func appendLog(_ line: String) {
-        logs += "\n" + line
+        var color: Color {
+            switch self {
+            case .running: .green
+            case .stopped: .gray
+            case .error: .red
+            }
+        }
     }
 
-    func pullAndRun() {
-        guard !isBusy else { return }
-        isBusy = true
-        logs = "🧊 Pulling & Running Alpine (docker.io/library/alpine:latest)\n------------------------"
+    let id = UUID()
+    let name: String
+    let image: String
+    let uptime: String
+    let status: Status
+}
 
-        Task {
-            do {
-                appendLog("🛠 Creating ImageStore…")
-                let tempDir = FileManager.default.uniqueTemporaryDirectory(create: true)
-                defer { try? FileManager.default.removeItem(at: tempDir) }
+struct ImageSummary: Identifiable {
+    let id = UUID()
+    let name: String
+    let size: String
+    let created: String
+}
 
-                let contentStore = try LocalContentStore(path: tempDir)
-                let imageStore = try ImageStore(path: tempDir, contentStore: contentStore)
+struct LogEntry: Identifiable {
+    let id = UUID()
+    let timestamp: String
+    let message: String
+}
 
-                //let auth = BasicAuthentication(username: "alechash", password: "")
-                //let reference = "ghcr.io/linuxcontainers/alpine:latest"
-                
-                let reference = "docker.io/library/alpine:latest"
-                
-                let image = try await imageStore.pull(reference: reference, auth: nil)
+struct ContentView: View {
+    @State private var searchLogs = ""
 
-                appendLog("✅ Pulled: \(image.descriptor.digest)")
+    private let containers: [ContainerSummary] = [
+        .init(name: "postgres-dev", image: "postgres:17", uptime: "2h 14m", status: .running),
+        .init(name: "redis-cache", image: "redis:7", uptime: "45m", status: .running),
+        .init(name: "worker-staging", image: "ghcr.io/crate/worker:latest", uptime: "Stopped", status: .stopped),
+        .init(name: "ml-inference", image: "python:3.12-slim", uptime: "CrashLoop", status: .error)
+    ]
 
-                appendLog("🧠 Setting up kernel and manager…")
-                //let kernelPath = "Crate/vmlinuz-6.12.28-153"
-                
-                
-                
-                var kernel: Kernel;
-                
-                if let kernelURL = Bundle.main.url(forResource: "vmlinuz-6.12.28-153", withExtension: nil) {
-#if arch(arm64)
-                    kernel = Kernel(path: kernelURL, platform: .linuxArm)
-#else
-                    kernel = Kernel(path: kernelURL, platform: .linuxAmd)
-#endif
-                } else {
-                    fatalError("Kernel file not found in bundle.")
-                }
+    private let images: [ImageSummary] = [
+        .init(name: "docker.io/library/alpine:latest", size: "8.2 MB", created: "Today"),
+        .init(name: "postgres:17", size: "357 MB", created: "1 day ago"),
+        .init(name: "redis:7", size: "154 MB", created: "3 days ago")
+    ]
 
-                let manager = try await ContainerManager(
-                    kernel: kernel,
-                    initfsReference: image.reference
-                )
-                
-                appendLog("🚧 Creating container…")
-                let container = try await manager.create(
-                    "crate-alpine-\(UUID().uuidString.prefix(6))",
-                    reference: image.reference,
-                    rootfsSizeInBytes: 1024 * 1024 * 1024
-                ) { config in
-                    appendLog("Config in")
-                    config.cpus = 2
-                    config.memoryInBytes = 1024 * 1024 * 1024
-                    config.rosetta = false
-                }
-                
-                appendLog("Config out")
-                                
-                try await container.create()
-                
-                appendLog("Container in")
-                
-                appendLog("🔋 Starting container \(container.id)…")
-                try await container.start()
+    private let logs: [LogEntry] = [
+        .init(timestamp: "12:40:07", message: "postgres-dev | ready to accept connections"),
+        .init(timestamp: "12:40:12", message: "redis-cache | background saving started"),
+        .init(timestamp: "12:41:31", message: "ml-inference | failed to bind to port 8080")
+    ]
 
-                appendLog("🚀 Container running. Waiting to exit…")
-                try await container.wait()
-                appendLog("🛑 Container exited.")
+    private var filteredLogs: [LogEntry] {
+        guard !searchLogs.isEmpty else { return logs }
+        return logs.filter { $0.message.localizedCaseInsensitiveContains(searchLogs) }
+    }
 
-            } catch {
-                appendLog("❌ Error: \(error)")
-                print(error)
+    var body: some View {
+        NavigationSplitView {
+            List {
+                Label("Containers", systemImage: "shippingbox")
+                Label("Images", systemImage: "square.stack.3d.up")
+                Label("Logs", systemImage: "doc.text.magnifyingglass")
+                Label("Create", systemImage: "slider.horizontal.3")
             }
+            .navigationTitle("Crate")
+        } detail: {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    header
+                    containerManagement
+                    imageManagement
+                    logsPanel
+                    creationPanel
+                }
+                .padding(20)
+            }
+            .background(.regularMaterial)
+        }
+        .frame(minWidth: 980, minHeight: 640)
+    }
 
-            isBusy = false
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Crate")
+                .font(.largeTitle.bold())
+            Text("Native container dashboard for Apple Containerization")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var containerManagement: some View {
+        GroupBox("Container Management") {
+            VStack(spacing: 10) {
+                ForEach(containers) { container in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(container.name)
+                                .font(.headline)
+                            Text(container.image)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Label(container.status.rawValue.capitalized, systemImage: "circle.fill")
+                            .foregroundStyle(container.status.color)
+
+                        Text(container.uptime)
+                            .font(.caption)
+                            .frame(width: 90, alignment: .trailing)
+
+                        HStack(spacing: 8) {
+                            Button("Start") {}
+                            Button("Stop") {}
+                            Button("Delete", role: .destructive) {}
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var imageManagement: some View {
+        GroupBox("Image Management") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    TextField("Pull image (e.g. docker.io/library/alpine:latest)", text: .constant(""))
+                    Button("Pull") {}
+                        .buttonStyle(.borderedProminent)
+                }
+
+                ForEach(images) { image in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(image.name)
+                            Text("\(image.size) • \(image.created)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Inspect") {}
+                        Button("Remove", role: .destructive) {}
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+    }
+
+    private var logsPanel: some View {
+        GroupBox("Logs & Monitoring") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    TextField("Search logs", text: $searchLogs)
+                    Button("Export") {}
+                        .buttonStyle(.bordered)
+                }
+
+                ForEach(filteredLogs) { entry in
+                    HStack(alignment: .top, spacing: 10) {
+                        Text(entry.timestamp)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Text(entry.message)
+                            .font(.system(.body, design: .monospaced))
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var creationPanel: some View {
+        GroupBox("Container Creation") {
+            VStack(alignment: .leading, spacing: 12) {
+                LabeledContent("Image") {
+                    Text("docker.io/library/alpine:latest")
+                }
+
+                HStack {
+                    Text("CPU")
+                    Slider(value: .constant(2), in: 1...8, step: 1)
+                    Text("2")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack {
+                    Text("Memory")
+                    Slider(value: .constant(2048), in: 256...8192, step: 256)
+                    Text("2048 MB")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack {
+                    Button("Save Preset") {}
+                    Button("Create Container") {}
+                        .buttonStyle(.borderedProminent)
+                }
+            }
         }
     }
 }
 
-struct CratePullView: View {
-    @StateObject var puller = AlpinePuller()
-
-    var body: some View {
-        VStack(alignment: .leading) {
-            Text("🪨 Crate: Pull & Run Alpine")
-                .font(.title2).bold()
-
-            ScrollView {
-                Text(puller.logs)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .border(Color.secondary)
-
-            Button(action: {
-                puller.pullAndRun()
-            }) {
-                Text(puller.isBusy ? "Running…" : "Pull & Run Alpine")
-            }
-            .disabled(puller.isBusy)
-            .padding(.top, 8)
-            .buttonStyle(.borderedProminent)
-        }
-        .padding()
-    }
+#Preview {
+    ContentView()
 }
