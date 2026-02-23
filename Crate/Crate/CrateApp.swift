@@ -11,7 +11,7 @@ import SwiftUI
 struct CrateApp: App {
     var body: some Scene {
         WindowGroup {
-            CratePullView()
+            ContentView()
         }
     }
 }
