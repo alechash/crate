@@ -91,6 +91,15 @@ struct ContainerRow: View {
                     .help("Stop")
                 }
 
+                if container.status == .running || container.status == .stopped {
+                    Button {
+                        Task { await manager.restartContainer(id: container.id) }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .help(container.status == .stopped ? "Start" : "Restart")
+                }
+
                 Button(role: .destructive) {
                     Task { await manager.deleteContainer(id: container.id) }
                 } label: {

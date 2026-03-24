@@ -248,6 +248,7 @@ final class CrateManager {
                 ipAddress: containerIP,
                 portMappings: portMappings,
                 portForwarders: forwarders,
+                processArgs: processArgs,
                 cpus: cpus,
                 memoryMB: memoryMB,
                 container: container
@@ -279,6 +280,7 @@ final class CrateManager {
                     ipAddress: nil,
                     portMappings: [],
                     portForwarders: [],
+                    processArgs: processArgs,
                     cpus: cpus, memoryMB: memoryMB, container: nil
                 ))
             }
@@ -340,6 +342,90 @@ final class CrateManager {
         } catch {
             containers[idx].status = .error
             appendLog("Error stopping '\(id)': \(error.localizedDescription)", level: .error)
+        }
+    }
+
+    func restartContainer(id: String) async {
+        guard let idx = containers.firstIndex(where: { $0.id == id }) else { return }
+        appendLog("Restarting container '\(id)'...")
+
+        // Save config before teardown
+        let saved = containers[idx]
+
+        // Stop forwarders
+        for fwd in saved.portForwarders {
+            fwd.stop()
+        }
+
+        // Stop if running
+        if saved.status == .running {
+            do { try await saved.container?.stop() } catch {}
+        }
+
+        // Delete old container from the manager
+        if let mgr = containerManager {
+            do { try mgr.delete(id) } catch {}
+        }
+        containers.remove(at: idx)
+
+        // Recreate with same settings
+        do {
+            let mgr = try ensureManager()
+            var containerIP: String?
+            let newContainer = try await mgr.create(
+                id,
+                reference: saved.imageRef,
+                rootfsSizeInBytes: 2048 * 1024 * 1024
+            ) { config in
+                config.cpus = saved.cpus
+                config.memoryInBytes = UInt64(saved.memoryMB) * 1024 * 1024
+                config.process.arguments = saved.processArgs
+                if config.interfaces.isEmpty {
+                    config.dns = nil
+                } else {
+                    containerIP = config.interfaces.first?.address
+                }
+            }
+
+            // Restart port forwarders
+            var forwarders: [PortForwarder] = []
+            if let ip = containerIP {
+                for mapping in saved.portMappings {
+                    let fwd = PortForwarder(hostPort: mapping.hostPort, containerPort: mapping.containerPort, containerIP: ip)
+                    do {
+                        try fwd.start()
+                        forwarders.append(fwd)
+                    } catch {
+                        appendLog("Failed to restore port \(mapping.hostPort): \(error.localizedDescription)", level: .warning)
+                    }
+                }
+            }
+
+            containers.append(ManagedContainer(
+                id: id,
+                name: saved.name,
+                imageRef: saved.imageRef,
+                status: .stopped,
+                uptime: "Restarting...",
+                ipAddress: containerIP,
+                portMappings: saved.portMappings,
+                portForwarders: forwarders,
+                processArgs: saved.processArgs,
+                cpus: saved.cpus,
+                memoryMB: saved.memoryMB,
+                container: newContainer
+            ))
+
+            try await newContainer.create()
+            try await newContainer.start()
+
+            if let newIdx = containers.firstIndex(where: { $0.id == id }) {
+                containers[newIdx].status = .running
+                containers[newIdx].uptime = "Just restarted"
+            }
+            appendLog("Container '\(id)' restarted")
+        } catch {
+            appendLog("Error restarting '\(id)': \(error.localizedDescription)", level: .error)
         }
     }
 

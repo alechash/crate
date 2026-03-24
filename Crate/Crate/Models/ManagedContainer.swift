@@ -30,6 +30,7 @@ struct ManagedContainer: Identifiable {
     var ipAddress: String?
     var portMappings: [PortMapping]
     var portForwarders: [PortForwarder]
+    var processArgs: [String]
     var cpus: Int
     var memoryMB: UInt64
     var container: LinuxContainer?
