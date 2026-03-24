@@ -286,6 +286,42 @@ final class CrateManager {
         }
     }
 
+    // MARK: - Port forwarding (live)
+
+    func addPortForward(containerID: String, hostPort: UInt16, containerPort: UInt16) {
+        guard let idx = containers.firstIndex(where: { $0.id == containerID }),
+              let ip = containers[idx].ipAddress else { return }
+
+        // Don't duplicate
+        if containers[idx].portMappings.contains(where: { $0.hostPort == hostPort }) { return }
+
+        let fwd = PortForwarder(hostPort: hostPort, containerPort: containerPort, containerIP: ip)
+        do {
+            try fwd.start()
+            containers[idx].portMappings.append(PortMapping(hostPort: hostPort, containerPort: containerPort))
+            containers[idx].portForwarders.append(fwd)
+            appendLog("Forwarding localhost:\(hostPort) → \(ip):\(containerPort)")
+        } catch {
+            appendLog("Failed to forward port \(hostPort): \(error.localizedDescription)", level: .error)
+        }
+    }
+
+    func removePortForward(containerID: String, mappingID: UUID) {
+        guard let idx = containers.firstIndex(where: { $0.id == containerID }) else { return }
+        guard let mappingIdx = containers[idx].portMappings.firstIndex(where: { $0.id == mappingID }) else { return }
+
+        let mapping = containers[idx].portMappings[mappingIdx]
+
+        // Stop the matching forwarder
+        if let fwdIdx = containers[idx].portForwarders.firstIndex(where: { $0.hostPort == mapping.hostPort && $0.containerPort == mapping.containerPort }) {
+            containers[idx].portForwarders[fwdIdx].stop()
+            containers[idx].portForwarders.remove(at: fwdIdx)
+        }
+
+        containers[idx].portMappings.remove(at: mappingIdx)
+        appendLog("Removed port forward localhost:\(mapping.hostPort)")
+    }
+
     func stopContainer(id: String) async {
         guard let idx = containers.firstIndex(where: { $0.id == id }) else { return }
         appendLog("Stopping container '\(id)'")

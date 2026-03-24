@@ -4,6 +4,7 @@ struct ContainerRow: View {
     let container: ManagedContainer
     var manager: CrateManager
     @State private var showTerminal = false
+    @State private var showDetail = false
     @State private var terminalSession = ContainerTerminalSession()
 
     var body: some View {
@@ -63,6 +64,13 @@ struct ContainerRow: View {
             .frame(width: 110, alignment: .trailing)
 
             HStack(spacing: 6) {
+                Button {
+                    showDetail = true
+                } label: {
+                    Image(systemName: "info.circle")
+                }
+                .help("Details & Settings")
+
                 if container.status == .running {
                     Button {
                         showTerminal = true
@@ -96,6 +104,9 @@ struct ContainerRow: View {
         .sheet(isPresented: $showTerminal) {
             TerminalView(session: terminalSession, containerName: container.name, containerID: container.id)
                 .frame(minWidth: 800, minHeight: 500)
+        }
+        .sheet(isPresented: $showDetail) {
+            ContainerDetailView(containerID: container.id, manager: manager)
         }
     }
 }
