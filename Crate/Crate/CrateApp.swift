@@ -13,5 +13,12 @@ struct CrateApp: App {
         WindowGroup {
             ContentView()
         }
+
+        WindowGroup("Terminal", id: "terminal", for: String.self) { $containerID in
+            if let id = containerID {
+                PopoutTerminalHost(containerID: id)
+            }
+        }
+        .defaultSize(width: 800, height: 500)
     }
 }
