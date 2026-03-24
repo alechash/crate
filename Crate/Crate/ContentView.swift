@@ -3,6 +3,7 @@ import SwiftUI
 enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
     case containers = "Containers"
     case images = "Images"
+    case volumes = "Volumes"
     case logs = "Logs"
 
     var id: Self { self }
@@ -11,6 +12,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .containers: "shippingbox"
         case .images: "square.stack.3d.up"
+        case .volumes: "externaldrive"
         case .logs: "doc.text.magnifyingglass"
         }
     }
@@ -69,6 +71,8 @@ struct ContentView: View {
                     ContainersView(manager: manager)
                 case .images:
                     ImagesView(manager: manager)
+                case .volumes:
+                    VolumesView(manager: manager)
                 case .logs:
                     LogsView(manager: manager)
                 case nil:

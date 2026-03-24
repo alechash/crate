@@ -6,6 +6,7 @@ import Containerization
 final class CrateManager {
     var containers: [ManagedContainer] = []
     var images: [ManagedImage] = []
+    var volumes: [CrateVolume] = []
     var logs: [LogEntry] = []
 
     var isLoadingImages = false
@@ -42,6 +43,7 @@ final class CrateManager {
     init() {
         Task {
             await refreshImages()
+            loadVolumes()
             await initializeManager()
         }
     }
@@ -168,7 +170,86 @@ final class CrateManager {
         }
     }
 
+    // MARK: - Volume operations
+
+    func loadVolumes() {
+        let fm = FileManager.default
+        let root = CrateVolume.volumesRoot
+
+        guard let contents = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey, .creationDateKey]) else { return }
+        volumes = contents.compactMap { url -> CrateVolume? in
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .creationDateKey])
+            guard values?.isDirectory == true else { return nil }
+
+            let id = url.lastPathComponent
+            let metaURL = root.appendingPathComponent("\(id).plist")
+            let meta = NSDictionary(contentsOf: metaURL)
+
+            let name = meta?["name"] as? String ?? id
+            let created = meta?["createdAt"] as? Date ?? values?.creationDate ?? Date()
+
+            return CrateVolume(id: id, name: name, createdAt: created)
+        }.sorted { $0.createdAt > $1.createdAt }
+
+        appendLog("Loaded \(volumes.count) volume(s)")
+    }
+
+    func createVolume(name: String) {
+        let id = name.isEmpty ? String(UUID().uuidString.prefix(8).lowercased()) : name
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+            .filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+
+        let volumePath = CrateVolume.volumesRoot.appendingPathComponent(id)
+
+        guard !FileManager.default.fileExists(atPath: volumePath.path) else {
+            appendLog("Volume '\(id)' already exists", level: .error)
+            return
+        }
+
+        do {
+            try FileManager.default.createDirectory(at: volumePath, withIntermediateDirectories: true)
+
+            let meta: NSDictionary = [
+                "name": name.isEmpty ? id : name,
+                "createdAt": Date(),
+            ]
+            let metaURL = CrateVolume.volumesRoot.appendingPathComponent("\(id).plist")
+            meta.write(to: metaURL, atomically: true)
+
+            let volume = CrateVolume(id: id, name: name.isEmpty ? id : name, createdAt: Date())
+            volumes.insert(volume, at: 0)
+            appendLog("Volume '\(id)' created")
+        } catch {
+            appendLog("Failed to create volume: \(error.localizedDescription)", level: .error)
+        }
+    }
+
+    func deleteVolume(id: String) {
+        if let vol = volumes.first(where: { $0.id == id }), vol.attachedTo != nil {
+            appendLog("Cannot delete volume '\(id)' — it is attached to container '\(vol.attachedTo!)'", level: .error)
+            return
+        }
+
+        let volumePath = CrateVolume.volumesRoot.appendingPathComponent(id)
+        let metaPath = CrateVolume.volumesRoot.appendingPathComponent("\(id).plist")
+
+        do {
+            try FileManager.default.removeItem(at: volumePath)
+            try? FileManager.default.removeItem(at: metaPath)
+            volumes.removeAll { $0.id == id }
+            appendLog("Volume '\(id)' deleted")
+        } catch {
+            appendLog("Failed to delete volume '\(id)': \(error.localizedDescription)", level: .error)
+        }
+    }
+
     // MARK: - Container operations
+
+    struct VolumeAttachment {
+        let volumeID: String
+        let mountPath: String
+    }
 
     func createAndStartContainer(
         name: String,
@@ -179,7 +260,8 @@ final class CrateManager {
         enableNetworking: Bool = true,
         dnsServers: [String] = [],
         hostname: String = "",
-        portMappings: [PortMapping] = []
+        portMappings: [PortMapping] = [],
+        volumeAttachments: [VolumeAttachment] = []
     ) async {
         let id = name.isEmpty ? String(UUID().uuidString.prefix(8).lowercased()) : name
         appendLog("Creating container '\(id)' from \(imageRef)")
@@ -222,6 +304,22 @@ final class CrateManager {
                         config.dns = .init(nameservers: dnsServers)
                     }
                 }
+
+                // Attach volumes as virtiofs shares
+                for attachment in volumeAttachments {
+                    if let vol = self.volumes.first(where: { $0.id == attachment.volumeID }) {
+                        let sourcePath = vol.hostPath.path(percentEncoded: false)
+                        let exists = FileManager.default.fileExists(atPath: sourcePath)
+                        print("[Crate] Volume mount: \(sourcePath) → \(attachment.mountPath) (exists: \(exists))")
+                        let mount: Containerization.Mount = .share(
+                            source: sourcePath,
+                            destination: attachment.mountPath
+                        )
+                        config.mounts.append(mount)
+                    } else {
+                        print("[Crate] Volume \(attachment.volumeID) not found in volumes list")
+                    }
+                }
             }
 
             // Start port forwarders if we have an IP and port mappings
@@ -239,6 +337,14 @@ final class CrateManager {
                 }
             }
 
+            // Mark volumes as attached
+            let volAttachments = volumeAttachments.map { ($0.volumeID, $0.mountPath) }
+            for attachment in volumeAttachments {
+                if let vi = volumes.firstIndex(where: { $0.id == attachment.volumeID }) {
+                    volumes[vi].attachedTo = id
+                }
+            }
+
             containers.append(ManagedContainer(
                 id: id,
                 name: id,
@@ -248,6 +354,7 @@ final class CrateManager {
                 ipAddress: containerIP,
                 portMappings: portMappings,
                 portForwarders: forwarders,
+                volumeAttachments: volAttachments,
                 processArgs: processArgs,
                 cpus: cpus,
                 memoryMB: memoryMB,
@@ -280,6 +387,7 @@ final class CrateManager {
                     ipAddress: nil,
                     portMappings: [],
                     portForwarders: [],
+                    volumeAttachments: [],
                     processArgs: processArgs,
                     cpus: cpus, memoryMB: memoryMB, container: nil
                 ))
@@ -334,6 +442,16 @@ final class CrateManager {
         }
         containers[idx].portForwarders.removeAll()
 
+        // Detach volumes and log their contents
+        for (volID, mountPath) in containers[idx].volumeAttachments {
+            if let vi = volumes.firstIndex(where: { $0.id == volID }) {
+                let hostPath = volumes[vi].hostPath.path
+                let contents = (try? FileManager.default.contentsOfDirectory(atPath: hostPath)) ?? []
+                appendLog("Volume '\(volID)' at \(mountPath) has \(contents.count) item(s) on host: \(contents.joined(separator: ", "))")
+                volumes[vi].attachedTo = nil
+            }
+        }
+
         do {
             try await containers[idx].container?.stop()
             containers[idx].status = .stopped
@@ -376,7 +494,7 @@ final class CrateManager {
                 id,
                 reference: saved.imageRef,
                 rootfsSizeInBytes: 2048 * 1024 * 1024
-            ) { config in
+            ) { [volumes] config in
                 config.cpus = saved.cpus
                 config.memoryInBytes = UInt64(saved.memoryMB) * 1024 * 1024
                 config.process.arguments = saved.processArgs
@@ -384,6 +502,15 @@ final class CrateManager {
                     config.dns = nil
                 } else {
                     containerIP = config.interfaces.first?.address
+                }
+                for (volID, mountPath) in saved.volumeAttachments {
+                    if let vol = volumes.first(where: { $0.id == volID }) {
+                        let mount: Containerization.Mount = .share(
+                            source: vol.hostPath.path(percentEncoded: false),
+                            destination: mountPath
+                        )
+                        config.mounts.append(mount)
+                    }
                 }
             }
 
@@ -410,6 +537,7 @@ final class CrateManager {
                 ipAddress: containerIP,
                 portMappings: saved.portMappings,
                 portForwarders: forwarders,
+                volumeAttachments: saved.volumeAttachments,
                 processArgs: saved.processArgs,
                 cpus: saved.cpus,
                 memoryMB: saved.memoryMB,
