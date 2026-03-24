@@ -23,6 +23,11 @@ struct CreateContainerSheet: View {
     @State private var newHostPort = ""
     @State private var newContainerPort = ""
 
+    // Volumes
+    @State private var volumeAttachments: [(volumeID: String, mountPath: String)] = []
+    @State private var selectedVolumeID: String?
+    @State private var volumeMountPath = "/data"
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -193,6 +198,61 @@ struct CreateContainerSheet: View {
                             .font(.caption)
                     }
                 }
+
+                Section {
+                    if volumeAttachments.isEmpty {
+                        Text("No volumes attached")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(volumeAttachments.enumerated()), id: \.offset) { idx, attachment in
+                            HStack {
+                                if let vol = manager.volumes.first(where: { $0.id == attachment.volumeID }) {
+                                    Text(vol.name)
+                                        .font(.headline)
+                                }
+                                Image(systemName: "arrow.right")
+                                    .foregroundStyle(.secondary)
+                                    .font(.caption)
+                                Text(attachment.mountPath)
+                                    .font(.system(.body, design: .monospaced))
+                                Spacer()
+                                Button {
+                                    volumeAttachments.remove(at: idx)
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundStyle(.red)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    if !availableVolumes.isEmpty {
+                        HStack(spacing: 8) {
+                            Picker("Volume", selection: $selectedVolumeID) {
+                                Text("Select...").tag(nil as String?)
+                                ForEach(availableVolumes) { vol in
+                                    Text("\(vol.name) (\(vol.formattedSize))").tag(vol.id as String?)
+                                }
+                            }
+                            .frame(width: 200)
+
+                            TextField("Mount path", text: $volumeMountPath)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(.body, design: .monospaced))
+
+                            Button("Attach") {
+                                attachVolume()
+                            }
+                            .disabled(selectedVolumeID == nil || volumeMountPath.isEmpty)
+                        }
+                    }
+                } header: {
+                    Text("Volumes")
+                } footer: {
+                    Text("Attach persistent volumes to store data that survives container restarts.")
+                        .font(.caption)
+                }
             }
             .formStyle(.grouped)
 
@@ -223,7 +283,7 @@ struct CreateContainerSheet: View {
             }
             .padding()
         }
-        .frame(width: 550, height: 750)
+        .frame(width: 550, height: 850)
     }
 
     private var canAddPort: Bool {
@@ -238,12 +298,28 @@ struct CreateContainerSheet: View {
         newContainerPort = ""
     }
 
+    private var availableVolumes: [CrateVolume] {
+        manager.volumes.filter { vol in
+            vol.attachedTo == nil && !volumeAttachments.contains(where: { $0.volumeID == vol.id })
+        }
+    }
+
+    private func attachVolume() {
+        guard let volID = selectedVolumeID else { return }
+        volumeAttachments.append((volumeID: volID, mountPath: volumeMountPath))
+        selectedVolumeID = nil
+        volumeMountPath = "/data"
+    }
+
     private func createContainer() {
         isCreating = true
         var dnsServers: [String] = []
         if enableNetworking && customDNS {
             if !dnsServer1.isEmpty { dnsServers.append(dnsServer1) }
             if !dnsServer2.isEmpty { dnsServers.append(dnsServer2) }
+        }
+        let volAttachments = volumeAttachments.map {
+            CrateManager.VolumeAttachment(volumeID: $0.volumeID, mountPath: $0.mountPath)
         }
         Task {
             await manager.createAndStartContainer(
@@ -255,7 +331,8 @@ struct CreateContainerSheet: View {
                 enableNetworking: enableNetworking,
                 dnsServers: dnsServers,
                 hostname: hostname,
-                portMappings: portMappings
+                portMappings: portMappings,
+                volumeAttachments: volAttachments
             )
             isCreating = false
             dismiss()

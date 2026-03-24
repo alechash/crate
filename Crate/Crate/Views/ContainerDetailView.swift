@@ -135,13 +135,35 @@ struct ContainerDetailView: View {
                             }
                         }
                     }
+
+                    if !container.volumeAttachments.isEmpty {
+                        Section("Volumes") {
+                            ForEach(container.volumeAttachments, id: \.volumeID) { attachment in
+                                HStack {
+                                    if let vol = manager.volumes.first(where: { $0.id == attachment.volumeID }) {
+                                        Image(systemName: "externaldrive.fill")
+                                            .foregroundStyle(.blue)
+                                        Text(vol.name)
+                                            .font(.headline)
+                                    } else {
+                                        Text(attachment.volumeID)
+                                    }
+                                    Image(systemName: "arrow.right")
+                                        .foregroundStyle(.secondary)
+                                        .font(.caption)
+                                    Text(attachment.mountPath)
+                                        .font(.system(.body, design: .monospaced))
+                                }
+                            }
+                        }
+                    }
                 }
                 .formStyle(.grouped)
             } else {
                 ContentUnavailableView("Container Not Found", systemImage: "shippingbox")
             }
         }
-        .frame(width: 500, height: 550)
+        .frame(width: 500, height: 600)
     }
 
     private var canAddPort: Bool {
