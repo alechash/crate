@@ -8,11 +8,14 @@ A native macOS GUI for managing Linux containers using Apple's [Containerization
 
 ## Features
 
-- **Container lifecycle management** — Create, start, stop, and delete Linux containers
+- **Container lifecycle management** — Create, start, stop, restart, and delete Linux containers
 - **Built-in terminal** — Shell into running containers directly from the app, with pop-out window support
 - **Image management** — Pull, inspect, and remove OCI images from any registry
+- **Port forwarding** — Map ports from your Mac to containers on a per-port basis
 - **Network configuration** — vmnet-based networking with custom DNS and hostname settings
+- **Volumes** — Persistent storage that survives container restarts
 - **Live logs** — Filterable log stream for all container and runtime events
+- **Container settings** — Inspect details and manage port forwarding on running containers
 - **Quick pull catalog** — One-click pull for common base images (Alpine, Ubuntu, Debian, Fedora, Nginx)
 
 ## Requirements
@@ -56,9 +59,12 @@ Crate/
 │   ├── ManagedImage.swift         # Image data model
 │   ├── LogEntry.swift             # Log entry with level filtering
 │   ├── ImageCatalog.swift         # Quick-pull image catalog
+│   ├── CrateVolume.swift          # Persistent volume model
+│   ├── PortMapping.swift          # Port forwarding model
 │   └── CrateError.swift           # Error types
 ├── Manager/
-│   └── CrateManager.swift         # Core runtime manager (images, containers, networking)
+│   ├── CrateManager.swift         # Core runtime manager (images, containers, volumes, networking)
+│   └── PortForwarder.swift        # TCP proxy for port forwarding (Network.framework)
 ├── Terminal/
 │   ├── ContainerTerminalSession.swift  # Terminal session with ANSI handling
 │   ├── TerminalIO.swift           # Writer/ReaderStream bridge for container I/O
@@ -66,8 +72,10 @@ Crate/
 └── Views/
     ├── ContainersView.swift       # Container list
     ├── ContainerRow.swift         # Container row with action buttons
-    ├── CreateContainerSheet.swift  # Container creation form (resources, network, DNS)
+    ├── ContainerDetailView.swift  # Container settings and info panel
+    ├── CreateContainerSheet.swift # Container creation form (resources, network, ports, volumes)
     ├── ImagesView.swift           # Image list with pull and quick-pull
+    ├── VolumesView.swift          # Volume list with create/delete
     └── LogsView.swift             # Searchable, filterable log viewer
 ```
 
@@ -75,7 +83,7 @@ Crate/
 
 Crate uses Apple's `Containerization` Swift framework directly — it does **not** shell out to the `container` CLI. It shares the same image store (`~/Library/Application Support/com.apple.container/`) and kernel, so images pulled via the CLI are visible in Crate and vice versa.
 
-Each container runs in its own lightweight Linux VM via Virtualization.framework. Networking uses `VmnetNetwork` for NAT-based internet access with configurable DNS.
+Each container runs in its own lightweight Linux VM via Virtualization.framework. Networking uses `VmnetNetwork` for NAT-based internet access with configurable DNS. Containers get their own IP on the local vmnet subnet and are directly reachable from your Mac — port forwarding maps `localhost` ports to container ports via a built-in TCP proxy.
 
 ## Configuration
 
@@ -91,10 +99,11 @@ When creating a container, you can configure:
 | DNS | Gateway (auto) |
 | Hostname | Auto-generated |
 | Port forwarding | None (add host→container port mappings as needed) |
+| Volumes | None (attach persistent volumes at any mount path) |
 
 ## Quick Example: Run Nginx
 
-Spin up an Nginx web server and access it from your Mac at `localhost:8080`.
+Spin up an Nginx web server and serve a custom page from your Mac at `localhost:8080`.
 
 1. **Start the runtime** (if you haven't already):
    ```bash
@@ -118,13 +127,11 @@ Spin up an Nginx web server and access it from your Mac at `localhost:8080`.
    ```
    You should see the "Welcome to nginx!" page.
 
-6. **Explore via terminal** — click the terminal icon on the running container:
+6. **Customize it** — click the terminal icon on the running container:
    ```
-   / # echo "Hello from Crate" > /usr/share/nginx/html/index.html
-   / # curl localhost
-   Hello from Crate
+   / # echo "Hello, Crate!" > /usr/share/nginx/html/index.html
    ```
-   Refresh your browser to see the updated page.
+   Refresh your browser — you should now see **Hello, Crate!**
 
 7. **Clean up** — close the terminal, stop the container, and delete it. Port forwarding is automatically cleaned up on stop.
 
@@ -139,10 +146,10 @@ Contributions are welcome. To get started:
 
 ### Areas where help is appreciated
 
-- Volume/mount management UI
 - Container resource monitoring (CPU/memory graphs)
 - Menu bar quick-access widget
 - Container presets and templates
+- Directory bind mounts (host folder → container)
 - Automated tests
 
 ## License
