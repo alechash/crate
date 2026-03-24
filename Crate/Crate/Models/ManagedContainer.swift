@@ -27,6 +27,9 @@ struct ManagedContainer: Identifiable {
     let imageRef: String
     var status: Status
     var uptime: String
+    var ipAddress: String?
+    var portMappings: [PortMapping]
+    var portForwarders: [PortForwarder]
     var cpus: Int
     var memoryMB: UInt64
     var container: LinuxContainer?

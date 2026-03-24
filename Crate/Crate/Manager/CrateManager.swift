@@ -175,18 +175,33 @@ final class CrateManager {
         imageRef: String,
         cpus: Int,
         memoryMB: UInt64,
-        command: [String],
+        commands: [String],
         enableNetworking: Bool = true,
         dnsServers: [String] = [],
-        hostname: String = ""
+        hostname: String = "",
+        portMappings: [PortMapping] = []
     ) async {
         let id = name.isEmpty ? String(UUID().uuidString.prefix(8).lowercased()) : name
         appendLog("Creating container '\(id)' from \(imageRef)")
+
+        // Build the process arguments from the commands list.
+        // Multiple commands are joined with & and wrapped in sh -c so they run concurrently.
+        let processArgs: [String]
+        let nonEmpty = commands.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        if nonEmpty.count > 1 {
+            let joined = nonEmpty.joined(separator: " & ")
+            processArgs = ["/bin/sh", "-c", joined + " & wait"]
+        } else if let single = nonEmpty.first {
+            processArgs = single.split(separator: " ").map(String.init)
+        } else {
+            processArgs = ["/bin/sh", "-c", "sleep infinity"]
+        }
 
         do {
             let mgr = try ensureManager()
 
             appendLog("Pulling/resolving image \(imageRef)...")
+            var containerIP: String?
             let container = try await mgr.create(
                 id,
                 reference: imageRef,
@@ -194,17 +209,33 @@ final class CrateManager {
             ) { config in
                 config.cpus = cpus
                 config.memoryInBytes = UInt64(memoryMB) * 1024 * 1024
-                if !command.isEmpty {
-                    config.process.arguments = command
-                }
+                config.process.arguments = processArgs
                 if !hostname.isEmpty {
                     config.hostname = hostname
                 }
                 if !enableNetworking {
                     config.interfaces = []
                     config.dns = nil
-                } else if !dnsServers.isEmpty {
-                    config.dns = .init(nameservers: dnsServers)
+                } else {
+                    containerIP = config.interfaces.first?.address
+                    if !dnsServers.isEmpty {
+                        config.dns = .init(nameservers: dnsServers)
+                    }
+                }
+            }
+
+            // Start port forwarders if we have an IP and port mappings
+            var forwarders: [PortForwarder] = []
+            if let ip = containerIP {
+                for mapping in portMappings {
+                    let fwd = PortForwarder(hostPort: mapping.hostPort, containerPort: mapping.containerPort, containerIP: ip)
+                    do {
+                        try fwd.start()
+                        forwarders.append(fwd)
+                        appendLog("Forwarding localhost:\(mapping.hostPort) → \(ip):\(mapping.containerPort)")
+                    } catch {
+                        appendLog("Failed to forward port \(mapping.hostPort): \(error.localizedDescription)", level: .error)
+                    }
                 }
             }
 
@@ -214,6 +245,9 @@ final class CrateManager {
                 imageRef: imageRef,
                 status: .stopped,
                 uptime: "Starting...",
+                ipAddress: containerIP,
+                portMappings: portMappings,
+                portForwarders: forwarders,
                 cpus: cpus,
                 memoryMB: memoryMB,
                 container: container
@@ -229,7 +263,11 @@ final class CrateManager {
                 containers[idx].status = .running
                 containers[idx].uptime = "Just started"
             }
-            appendLog("Container '\(id)' is running")
+            if let ip = containerIP {
+                appendLog("Container '\(id)' is running at \(ip)")
+            } else {
+                appendLog("Container '\(id)' is running (no network)")
+            }
         } catch {
             if let idx = containers.firstIndex(where: { $0.id == id }) {
                 containers[idx].status = .error
@@ -238,6 +276,9 @@ final class CrateManager {
                 containers.append(ManagedContainer(
                     id: id, name: id, imageRef: imageRef,
                     status: .error, uptime: "Failed",
+                    ipAddress: nil,
+                    portMappings: [],
+                    portForwarders: [],
                     cpus: cpus, memoryMB: memoryMB, container: nil
                 ))
             }
@@ -248,6 +289,12 @@ final class CrateManager {
     func stopContainer(id: String) async {
         guard let idx = containers.firstIndex(where: { $0.id == id }) else { return }
         appendLog("Stopping container '\(id)'")
+
+        // Stop all port forwarders
+        for fwd in containers[idx].portForwarders {
+            fwd.stop()
+        }
+        containers[idx].portForwarders.removeAll()
 
         do {
             try await containers[idx].container?.stop()

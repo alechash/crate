@@ -32,6 +32,28 @@ struct ContainerRow: View {
                     .foregroundStyle(.secondary)
             }
 
+            if let ip = container.ipAddress {
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(ip.split(separator: "/").first.map(String.init) ?? ip)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+
+                    if !container.portMappings.isEmpty {
+                        HStack(spacing: 4) {
+                            ForEach(container.portMappings) { mapping in
+                                Text(":\(mapping.hostPort)→:\(mapping.containerPort)")
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            }
+
             HStack(spacing: 4) {
                 Text("\(container.cpus) CPU")
                 Text("\(container.memoryMB) MB")

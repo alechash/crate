@@ -8,7 +8,7 @@ struct CreateContainerSheet: View {
     @State private var imageRef = "docker.io/library/alpine:latest"
     @State private var cpus: Double = 2
     @State private var memoryMB: Double = 1024
-    @State private var command = "sleep infinity"
+    @State private var commands: [String] = ["sleep infinity"]
     @State private var isCreating = false
 
     // Network settings
@@ -17,6 +17,11 @@ struct CreateContainerSheet: View {
     @State private var customDNS = false
     @State private var dnsServer1 = "8.8.8.8"
     @State private var dnsServer2 = "8.8.4.4"
+
+    // Port mappings
+    @State private var portMappings: [PortMapping] = []
+    @State private var newHostPort = ""
+    @State private var newContainerPort = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -82,9 +87,37 @@ struct CreateContainerSheet: View {
 
                 Section("General") {
                     TextField("Container name (auto-generated if empty)", text: $name)
-                    TextField("Command", text: $command)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
+                }
+
+                Section {
+                    ForEach(commands.indices, id: \.self) { index in
+                        HStack {
+                            TextField("Command", text: $commands[index])
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(.body, design: .monospaced))
+
+                            if commands.count > 1 {
+                                Button {
+                                    commands.remove(at: index)
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundStyle(.red)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    Button {
+                        commands.append("")
+                    } label: {
+                        Label("Add Command", systemImage: "plus.circle")
+                    }
+                } header: {
+                    Text("Commands")
+                } footer: {
+                    Text("Multiple commands run concurrently. At least one long-running command (e.g. sleep infinity) is needed to keep the container alive.")
+                        .font(.caption)
                 }
 
                 Section("Resources") {
@@ -113,6 +146,51 @@ struct CreateContainerSheet: View {
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(.body, design: .monospaced))
                         }
+                    }
+                }
+
+                if enableNetworking {
+                    Section {
+                        ForEach(portMappings) { mapping in
+                            HStack {
+                                Text("localhost:\(mapping.hostPort)")
+                                    .font(.system(.body, design: .monospaced))
+                                Image(systemName: "arrow.right")
+                                    .foregroundStyle(.secondary)
+                                Text("container:\(mapping.containerPort)")
+                                    .font(.system(.body, design: .monospaced))
+                                Spacer()
+                                Button {
+                                    portMappings.removeAll { $0.id == mapping.id }
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundStyle(.red)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            TextField("Host port", text: $newHostPort)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(.body, design: .monospaced))
+                                .frame(width: 100)
+                            Image(systemName: "arrow.right")
+                                .foregroundStyle(.secondary)
+                            TextField("Container port", text: $newContainerPort)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(.body, design: .monospaced))
+                                .frame(width: 120)
+                            Button("Add") {
+                                addPortMapping()
+                            }
+                            .disabled(!canAddPort)
+                        }
+                    } header: {
+                        Text("Port Forwarding")
+                    } footer: {
+                        Text("Forward traffic from a port on your Mac to a port inside the container.")
+                            .font(.caption)
                     }
                 }
             }
@@ -145,12 +223,23 @@ struct CreateContainerSheet: View {
             }
             .padding()
         }
-        .frame(width: 550, height: 650)
+        .frame(width: 550, height: 750)
+    }
+
+    private var canAddPort: Bool {
+        guard let hp = UInt16(newHostPort), let cp = UInt16(newContainerPort) else { return false }
+        return hp > 0 && cp > 0 && !portMappings.contains(where: { $0.hostPort == hp })
+    }
+
+    private func addPortMapping() {
+        guard let hp = UInt16(newHostPort), let cp = UInt16(newContainerPort) else { return }
+        portMappings.append(PortMapping(hostPort: hp, containerPort: cp))
+        newHostPort = ""
+        newContainerPort = ""
     }
 
     private func createContainer() {
         isCreating = true
-        let args = command.split(separator: " ").map(String.init)
         var dnsServers: [String] = []
         if enableNetworking && customDNS {
             if !dnsServer1.isEmpty { dnsServers.append(dnsServer1) }
@@ -162,10 +251,11 @@ struct CreateContainerSheet: View {
                 imageRef: imageRef,
                 cpus: Int(cpus),
                 memoryMB: UInt64(memoryMB),
-                command: args,
+                commands: commands,
                 enableNetworking: enableNetworking,
                 dnsServers: dnsServers,
-                hostname: hostname
+                hostname: hostname,
+                portMappings: portMappings
             )
             isCreating = false
             dismiss()

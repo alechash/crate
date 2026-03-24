@@ -86,10 +86,47 @@ When creating a container, you can configure:
 | Base image | `docker.io/library/alpine:latest` |
 | CPUs | 2 |
 | Memory | 1024 MB |
-| Command | `sleep infinity` |
+| Commands | `sleep infinity` (supports multiple concurrent commands) |
 | Networking | Enabled |
 | DNS | Gateway (auto) |
 | Hostname | Auto-generated |
+| Port forwarding | None (add host→container port mappings as needed) |
+
+## Quick Example: Run Nginx
+
+Spin up an Nginx web server and access it from your Mac at `localhost:8080`.
+
+1. **Start the runtime** (if you haven't already):
+   ```bash
+   container system start
+   ```
+
+2. **Launch Crate** and wait for the green "Runtime ready" indicator in the sidebar.
+
+3. **Pull the Nginx image** — go to **Images** and click the **Nginx** quick-pull card, or pull `docker.io/library/nginx:latest`.
+
+4. **Create the container** — go to **Containers**, click **+**, and configure:
+   - **Name:** `web`
+   - **Image:** `docker.io/library/nginx:latest`
+   - **Commands:** `nginx -g 'daemon off;'` and `sleep infinity` (click "Add Command" for the second one — multiple commands run concurrently)
+   - **Port Forwarding:** add `8080 → 80`
+   - Click **Create & Start**
+
+5. **Open your browser** and go to:
+   ```
+   http://localhost:8080
+   ```
+   You should see the "Welcome to nginx!" page.
+
+6. **Explore via terminal** — click the terminal icon on the running container:
+   ```
+   / # echo "Hello from Crate" > /usr/share/nginx/html/index.html
+   / # curl localhost
+   Hello from Crate
+   ```
+   Refresh your browser to see the updated page.
+
+7. **Clean up** — close the terminal, stop the container, and delete it. Port forwarding is automatically cleaned up on stop.
 
 ## Contributing
 
