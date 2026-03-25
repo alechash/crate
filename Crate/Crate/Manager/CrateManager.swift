@@ -310,14 +310,14 @@ final class CrateManager {
                     if let vol = self.volumes.first(where: { $0.id == attachment.volumeID }) {
                         let sourcePath = vol.hostPath.path(percentEncoded: false)
                         let exists = FileManager.default.fileExists(atPath: sourcePath)
-                        print("[Crate] Volume mount: \(sourcePath) → \(attachment.mountPath) (exists: \(exists))")
+                        appendLog("[Crate] Volume mount: \(sourcePath) → \(attachment.mountPath) (exists: \(exists))", level: .debug)
                         let mount: Containerization.Mount = .share(
                             source: sourcePath,
                             destination: attachment.mountPath
                         )
                         config.mounts.append(mount)
                     } else {
-                        print("[Crate] Volume \(attachment.volumeID) not found in volumes list")
+                        appendLog("[Crate] Volume \(attachment.volumeID) not found in volumes list", level: .debug)
                     }
                 }
             }
