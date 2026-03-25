@@ -304,9 +304,31 @@ struct CreateContainerSheet: View {
         }
     }
 
+    /// Validate and normalize a container volume mount path.
+    /// - Parameter rawPath: The user-supplied mount path.
+    /// - Returns: A sanitized absolute path, or `nil` if the path is invalid.
+    private func sanitizedMountPath(from rawPath: String) -> String? {
+        // Trim surrounding whitespace/newlines
+        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        // Require an absolute path
+        guard trimmed.hasPrefix("/") else { return nil }
+
+        // Disallow spaces in the path to avoid ambiguous or invalid mount points
+        guard !trimmed.contains(" ") else { return nil }
+
+        // Disallow parent-directory components
+        let components = trimmed.split(separator: "/")
+        guard !components.contains("..") else { return nil }
+
+        return trimmed
+    }
+
     private func attachVolume() {
         guard let volID = selectedVolumeID else { return }
-        volumeAttachments.append((volumeID: volID, mountPath: volumeMountPath))
+        guard let mountPath = sanitizedMountPath(from: volumeMountPath) else { return }
+        volumeAttachments.append((volumeID: volID, mountPath: mountPath))
         selectedVolumeID = nil
         volumeMountPath = "/data"
     }
