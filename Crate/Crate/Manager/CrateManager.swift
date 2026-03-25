@@ -195,11 +195,25 @@ final class CrateManager {
     }
 
     func createVolume(name: String) {
-        let id = name.isEmpty ? String(UUID().uuidString.prefix(8).lowercased()) : name
-            .lowercased()
-            .replacingOccurrences(of: " ", with: "-")
-            .filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+        let id: String
 
+        if name.isEmpty {
+            // Preserve existing behavior for empty names: use a UUID-based ID.
+            id = String(UUID().uuidString.prefix(8).lowercased())
+        } else {
+            // Sanitize the provided name.
+            let sanitizedId = name
+                .lowercased()
+                .replacingOccurrences(of: " ", with: "-")
+                .filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+
+            // If sanitization removed all characters, fall back to a UUID-based ID.
+            if sanitizedId.isEmpty {
+                id = String(UUID().uuidString.prefix(8).lowercased())
+            } else {
+                id = sanitizedId
+            }
+        }
         let volumePath = CrateVolume.volumesRoot.appendingPathComponent(id)
 
         guard !FileManager.default.fileExists(atPath: volumePath.path) else {
