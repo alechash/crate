@@ -9,9 +9,11 @@ import SwiftUI
 
 @main
 struct CrateApp: App {
+    @State private var manager = CrateManager()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(manager: manager)
         }
 
         WindowGroup("Terminal", id: "terminal", for: String.self) { $containerID in
@@ -20,5 +22,12 @@ struct CrateApp: App {
             }
         }
         .defaultSize(width: 800, height: 500)
+
+        MenuBarExtra {
+            MenuBarView(manager: manager)
+        } label: {
+            Image(systemName: "shippingbox.fill")
+        }
+        .menuBarExtraStyle(.menu)
     }
 }

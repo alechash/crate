@@ -20,7 +20,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
 
 struct ContentView: View {
     @State private var selection: SidebarItem? = .containers
-    @State private var manager = CrateManager()
+    var manager: CrateManager
 
     var body: some View {
         NavigationSplitView {
@@ -86,5 +86,5 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView()
+    ContentView(manager: CrateManager())
 }

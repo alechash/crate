@@ -12,6 +12,8 @@ final class CrateManager {
     var isLoadingImages = false
     var isPulling = false
     var isInitializing = false
+    var isBuilding = false
+    var buildOutput: String = ""
     var pullProgress: String = ""
     var errorMessage: String?
     var managerReady = false
@@ -40,11 +42,20 @@ final class CrateManager {
         imageStore.path.appendingPathComponent("initfs.ext4")
     }
 
+    private static let containersFile: URL = {
+        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("com.apple.container")
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root.appendingPathComponent("crate-containers.json")
+    }()
+
     init() {
+        loadPersistedContainers()
         Task {
             await refreshImages()
             loadVolumes()
             await initializeManager()
+            reconcileContainers()
         }
     }
 
@@ -390,6 +401,7 @@ final class CrateManager {
             } else {
                 appendLog("Container '\(id)' is running (no network)")
             }
+            saveContainers()
         } catch {
             if let idx = containers.firstIndex(where: { $0.id == id }) {
                 containers[idx].status = .error
@@ -407,6 +419,7 @@ final class CrateManager {
                 ))
             }
             appendLog("Failed to start '\(id)': \(error.localizedDescription)", level: .error)
+            saveContainers()
         }
     }
 
@@ -475,6 +488,7 @@ final class CrateManager {
             containers[idx].status = .error
             appendLog("Error stopping '\(id)': \(error.localizedDescription)", level: .error)
         }
+        saveContainers()
     }
 
     func restartContainer(id: String) async {
@@ -566,8 +580,10 @@ final class CrateManager {
                 containers[newIdx].uptime = "Just restarted"
             }
             appendLog("Container '\(id)' restarted")
+            saveContainers()
         } catch {
             appendLog("Error restarting '\(id)': \(error.localizedDescription)", level: .error)
+            saveContainers()
         }
     }
 
@@ -588,5 +604,117 @@ final class CrateManager {
         }
         containers.removeAll { $0.id == id }
         appendLog("Container '\(id)' removed")
+        saveContainers()
+    }
+
+    // MARK: - Container persistence
+
+    func saveContainers() {
+        let persisted = containers.map { $0.toPersisted() }
+        do {
+            let data = try JSONEncoder().encode(persisted)
+            try data.write(to: Self.containersFile, options: .atomic)
+        } catch {
+            appendLog("Failed to save containers: \(error.localizedDescription)", level: .warning)
+        }
+    }
+
+    private func loadPersistedContainers() {
+        guard FileManager.default.fileExists(atPath: Self.containersFile.path) else { return }
+        do {
+            let data = try Data(contentsOf: Self.containersFile)
+            let persisted = try JSONDecoder().decode([ManagedContainer.Persisted].self, from: data)
+            containers = persisted.map { ManagedContainer.fromPersisted($0) }
+            appendLog("Restored \(containers.count) container(s) from disk")
+        } catch {
+            appendLog("Failed to load persisted containers: \(error.localizedDescription)", level: .warning)
+        }
+    }
+
+    private func reconcileContainers() {
+        for i in containers.indices {
+            if containers[i].container == nil {
+                containers[i].status = .stopped
+                containers[i].uptime = "Stopped"
+            }
+        }
+        saveContainers()
+    }
+
+    // MARK: - Dockerfile build
+
+    func buildImage(
+        contextDir: URL,
+        dockerfilePath: URL?,
+        tag: String,
+        buildArgs: [String] = [],
+        noCache: Bool = false
+    ) async {
+        isBuilding = true
+        buildOutput = ""
+        appendLog("Building image '\(tag)' from \(contextDir.path)...")
+
+        var args = ["build"]
+
+        if let dockerfile = dockerfilePath {
+            args += ["-f", dockerfile.path(percentEncoded: false)]
+        }
+
+        args += ["-t", tag]
+
+        for arg in buildArgs {
+            args += ["--build-arg", arg]
+        }
+
+        if noCache {
+            args += ["--no-cache"]
+        }
+
+        args += ["--progress", "plain"]
+        args.append(contextDir.path(percentEncoded: false))
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/local/bin/container")
+        process.arguments = args
+
+        let pipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = errPipe
+
+        do {
+            try process.run()
+        } catch {
+            appendLog("Failed to start build: \(error.localizedDescription)", level: .error)
+            buildOutput = "Failed to start build: \(error.localizedDescription)"
+            isBuilding = false
+            return
+        }
+
+        let outHandle = pipe.fileHandleForReading
+        let errHandle = errPipe.fileHandleForReading
+
+        let outputTask = Task.detached { () -> String in
+            let outData = outHandle.readDataToEndOfFile()
+            let errData = errHandle.readDataToEndOfFile()
+            let out = String(data: outData, encoding: .utf8) ?? ""
+            let err = String(data: errData, encoding: .utf8) ?? ""
+            return out + err
+        }
+
+        process.waitUntilExit()
+        let output = await outputTask.value
+
+        buildOutput = output
+        let success = process.terminationStatus == 0
+
+        if success {
+            appendLog("Build of '\(tag)' completed successfully")
+            await refreshImages()
+        } else {
+            appendLog("Build of '\(tag)' failed (exit code \(process.terminationStatus))", level: .error)
+        }
+
+        isBuilding = false
     }
 }
