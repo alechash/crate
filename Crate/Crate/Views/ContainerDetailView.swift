@@ -138,7 +138,7 @@ struct ContainerDetailView: View {
 
                     if !container.volumeAttachments.isEmpty {
                         Section("Volumes") {
-                            ForEach(container.volumeAttachments, id: \.volumeID) { attachment in
+                            ForEach(Array(container.volumeAttachments.enumerated()), id: \.offset) { index, attachment in
                                 HStack {
                                     if let vol = manager.volumes.first(where: { $0.id == attachment.volumeID }) {
                                         Image(systemName: "externaldrive.fill")
