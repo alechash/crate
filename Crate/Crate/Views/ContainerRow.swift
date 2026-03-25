@@ -43,7 +43,7 @@ struct ContainerRow: View {
                     if !container.portMappings.isEmpty {
                         HStack(spacing: 4) {
                             ForEach(container.portMappings) { mapping in
-                                Text(":\(mapping.hostPort)→:\(mapping.containerPort)")
+                                Text(":\(String(mapping.hostPort))→:\(String(mapping.containerPort))")
                                     .font(.system(.caption2, design: .monospaced))
                                     .foregroundStyle(.blue)
                             }

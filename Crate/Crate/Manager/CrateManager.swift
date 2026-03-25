@@ -291,17 +291,48 @@ final class CrateManager {
         let id = name.isEmpty ? String(UUID().uuidString.prefix(8).lowercased()) : name
         appendLog("Creating container '\(id)' from \(imageRef)")
 
+        // Build volume init script and staging mounts.
+        // Volumes are mounted at a staging path, then an init script seeds them
+        // (copying original image contents on first use) and bind-mounts over the target.
+        var volumeInitScript = ""
+        var resolvedVolumes: [(volumeID: String, mountPath: String, stagingPath: String)] = []
+        for attachment in volumeAttachments {
+            if let vol = self.volumes.first(where: { $0.id == attachment.volumeID }) {
+                let staging = "/var/crate-volumes/\(vol.id)"
+                resolvedVolumes.append((vol.id, attachment.mountPath, staging))
+                // Seed if empty, then bind-mount over target
+                volumeInitScript += """
+                    mkdir -p \(staging) \(attachment.mountPath); \
+                    if [ -z "$(ls -A \(staging) 2>/dev/null)" ] && [ -d \(attachment.mountPath) ]; then \
+                    cp -a \(attachment.mountPath)/. \(staging)/ 2>/dev/null; fi; \
+                    mount --bind \(staging) \(attachment.mountPath); \
+
+                    """
+            }
+        }
+
         // Build the process arguments from the commands list.
-        // Multiple commands are joined with & and wrapped in sh -c so they run concurrently.
+        // If volumes are attached, prepend the init script to seed & bind-mount them.
         let processArgs: [String]
         let nonEmpty = commands.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let userCmd: String
         if nonEmpty.count > 1 {
-            let joined = nonEmpty.joined(separator: " & ")
-            processArgs = ["/bin/sh", "-c", joined + " & wait"]
+            userCmd = nonEmpty.joined(separator: " & ") + " & wait"
         } else if let single = nonEmpty.first {
-            processArgs = single.split(separator: " ").map(String.init)
+            userCmd = single
         } else {
-            processArgs = ["/bin/sh", "-c", "sleep infinity"]
+            userCmd = "sleep infinity"
+        }
+
+        if volumeInitScript.isEmpty {
+            if nonEmpty.count == 1, let single = nonEmpty.first {
+                processArgs = single.split(separator: " ").map(String.init)
+            } else {
+                processArgs = ["/bin/sh", "-c", userCmd]
+            }
+        } else {
+            // Volume init must run before user commands
+            processArgs = ["/bin/sh", "-c", volumeInitScript + userCmd]
         }
 
         do {
@@ -330,19 +361,16 @@ final class CrateManager {
                     }
                 }
 
-                // Attach volumes as virtiofs shares
-                for attachment in volumeAttachments {
-                    if let vol = self.volumes.first(where: { $0.id == attachment.volumeID }) {
+                // Attach volumes as virtiofs shares at staging paths
+                for rv in resolvedVolumes {
+                    if let vol = self.volumes.first(where: { $0.id == rv.volumeID }) {
                         let sourcePath = vol.hostPath.path(percentEncoded: false)
-                        let exists = FileManager.default.fileExists(atPath: sourcePath)
-                        appendLog("[Crate] Volume mount: \(sourcePath) → \(attachment.mountPath) (exists: \(exists))")
                         let mount: Containerization.Mount = .share(
                             source: sourcePath,
-                            destination: attachment.mountPath
+                            destination: rv.stagingPath
                         )
                         config.mounts.append(mount)
-                    } else {
-                        appendLog("[Crate] Volume \(attachment.volumeID) not found in volumes list")
+                        appendLog("Volume '\(rv.volumeID)': \(sourcePath) → staging \(rv.stagingPath) → target \(rv.mountPath)")
                     }
                 }
             }
@@ -531,11 +559,13 @@ final class CrateManager {
                 } else {
                     containerIP = config.interfaces.first?.address
                 }
-                for (volID, mountPath) in saved.volumeAttachments {
+                // Mount volumes at staging paths (init script in processArgs handles bind-mount)
+                for (volID, _) in saved.volumeAttachments {
                     if let vol = volumes.first(where: { $0.id == volID }) {
+                        let staging = "/var/crate-volumes/\(volID)"
                         let mount: Containerization.Mount = .share(
                             source: vol.hostPath.path(percentEncoded: false),
-                            destination: mountPath
+                            destination: staging
                         )
                         config.mounts.append(mount)
                     }
@@ -594,6 +624,13 @@ final class CrateManager {
             await stopContainer(id: id)
         }
 
+        // Detach any volumes still marked as attached to this container
+        for (volID, _) in containers[idx].volumeAttachments {
+            if let vi = volumes.firstIndex(where: { $0.id == volID }) {
+                volumes[vi].attachedTo = nil
+            }
+        }
+
         appendLog("Deleting container '\(id)'")
         if let mgr = containerManager {
             do {
@@ -637,6 +674,10 @@ final class CrateManager {
                 containers[i].status = .stopped
                 containers[i].uptime = "Stopped"
             }
+        }
+        // Clear stale volume attachments since no containers are live after relaunch
+        for i in volumes.indices {
+            volumes[i].attachedTo = nil
         }
         saveContainers()
     }

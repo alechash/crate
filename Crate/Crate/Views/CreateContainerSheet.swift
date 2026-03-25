@@ -157,13 +157,16 @@ struct CreateContainerSheet: View {
                 if enableNetworking {
                     Section {
                         ForEach(portMappings) { mapping in
-                            HStack {
-                                Text("localhost:\(mapping.hostPort)")
+                            HStack(spacing: 6) {
+                                Text("\(String(mapping.hostPort))")
                                     .font(.system(.body, design: .monospaced))
+                                    .frame(width: 60, alignment: .trailing)
                                 Image(systemName: "arrow.right")
                                     .foregroundStyle(.secondary)
-                                Text("container:\(mapping.containerPort)")
+                                    .font(.caption)
+                                Text("\(String(mapping.containerPort))")
                                     .font(.system(.body, design: .monospaced))
+                                    .frame(width: 60, alignment: .leading)
                                 Spacer()
                                 Button {
                                     portMappings.removeAll { $0.id == mapping.id }
@@ -179,13 +182,11 @@ struct CreateContainerSheet: View {
                             TextField("Host port", text: $newHostPort)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(.body, design: .monospaced))
-                                .frame(width: 100)
                             Image(systemName: "arrow.right")
                                 .foregroundStyle(.secondary)
                             TextField("Container port", text: $newContainerPort)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(.body, design: .monospaced))
-                                .frame(width: 120)
                             Button("Add") {
                                 addPortMapping()
                             }
@@ -194,7 +195,7 @@ struct CreateContainerSheet: View {
                     } header: {
                         Text("Port Forwarding")
                     } footer: {
-                        Text("Forward traffic from a port on your Mac to a port inside the container.")
+                        Text("Map a port on your Mac (host) to a port inside the container.")
                             .font(.caption)
                     }
                 }
@@ -321,6 +322,10 @@ struct CreateContainerSheet: View {
         // Disallow parent-directory components
         let components = trimmed.split(separator: "/")
         guard !components.contains("..") else { return nil }
+
+        // Disallow mounting at root or critical system paths
+        let blocked = ["/", "/proc", "/sys", "/dev", "/run"]
+        guard !blocked.contains(trimmed) else { return nil }
 
         return trimmed
     }

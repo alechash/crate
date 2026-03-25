@@ -89,7 +89,7 @@ struct MenuBarContainerItem: View {
             if !container.portMappings.isEmpty {
                 Divider()
                 ForEach(container.portMappings) { mapping in
-                    Text(":\(mapping.hostPort) \u{2192} :\(mapping.containerPort)")
+                    Text(":\(String(mapping.hostPort)) \u{2192} :\(String(mapping.containerPort))")
                 }
             }
         } label: {

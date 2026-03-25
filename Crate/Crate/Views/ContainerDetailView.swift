@@ -84,12 +84,12 @@ struct ContainerDetailView: View {
                                 ForEach(container.portMappings) { mapping in
                                     HStack {
                                         HStack(spacing: 4) {
-                                            Text("localhost:\(mapping.hostPort)")
+                                            Text("localhost:\(String(mapping.hostPort))")
                                                 .font(.system(.body, design: .monospaced))
                                             Image(systemName: "arrow.right")
                                                 .foregroundStyle(.secondary)
                                                 .font(.caption)
-                                            Text("container:\(mapping.containerPort)")
+                                            Text("container:\(String(mapping.containerPort))")
                                                 .font(.system(.body, design: .monospaced))
                                         }
 
@@ -110,16 +110,14 @@ struct ContainerDetailView: View {
 
                             if container.status == .running {
                                 HStack(spacing: 8) {
-                                    TextField("Host", text: $newHostPort)
+                                    TextField("Host port", text: $newHostPort)
                                         .textFieldStyle(.roundedBorder)
                                         .font(.system(.body, design: .monospaced))
-                                        .frame(width: 80)
                                     Image(systemName: "arrow.right")
                                         .foregroundStyle(.secondary)
-                                    TextField("Container", text: $newContainerPort)
+                                    TextField("Container port", text: $newContainerPort)
                                         .textFieldStyle(.roundedBorder)
                                         .font(.system(.body, design: .monospaced))
-                                        .frame(width: 100)
                                     Button("Add") {
                                         addPort()
                                     }
