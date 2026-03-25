@@ -456,21 +456,21 @@ final class CrateManager {
         }
         containers[idx].portForwarders.removeAll()
 
-        // Detach volumes and log their contents
-        for (volID, mountPath) in containers[idx].volumeAttachments {
-            if let vi = volumes.firstIndex(where: { $0.id == volID }) {
-                let hostPath = volumes[vi].hostPath.path
-                let contents = (try? FileManager.default.contentsOfDirectory(atPath: hostPath)) ?? []
-                appendLog("Volume '\(volID)' at \(mountPath) has \(contents.count) item(s) on host: \(contents.joined(separator: ", "))")
-                volumes[vi].attachedTo = nil
-            }
-        }
-
         do {
             try await containers[idx].container?.stop()
             containers[idx].status = .stopped
             containers[idx].uptime = "Stopped"
             appendLog("Container '\(id)' stopped")
+
+            // Detach volumes only after a confirmed stop
+            for (volID, mountPath) in containers[idx].volumeAttachments {
+                if let vi = volumes.firstIndex(where: { $0.id == volID }) {
+                    let hostPath = volumes[vi].hostPath.path
+                    let count = (try? FileManager.default.contentsOfDirectory(atPath: hostPath))?.count ?? 0
+                    appendLog("Volume '\(volID)' at \(mountPath) has \(count) item(s)")
+                    volumes[vi].attachedTo = nil
+                }
+            }
         } catch {
             containers[idx].status = .error
             appendLog("Error stopping '\(id)': \(error.localizedDescription)", level: .error)
