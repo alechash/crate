@@ -7,6 +7,7 @@ struct ContainerDetailView: View {
 
     @State private var newHostPort = ""
     @State private var newContainerPort = ""
+    @State private var stats = ContainerStatsMonitor()
 
     private var container: ManagedContainer? {
         manager.containers.first { $0.id == containerID }
@@ -61,6 +62,12 @@ struct ContainerDetailView: View {
                     Section("Resources") {
                         LabeledContent("CPUs", value: "\(container.cpus)")
                         LabeledContent("Memory", value: "\(container.memoryMB) MB")
+                    }
+
+                    if container.status == .running {
+                        Section("Live Stats") {
+                            ContainerStatsView(monitor: stats)
+                        }
                     }
 
                     Section("Network") {
@@ -162,6 +169,14 @@ struct ContainerDetailView: View {
             }
         }
         .frame(width: 500, height: 600)
+        .task(id: "\(containerID)-\(container?.status.rawValue ?? "none")") {
+            if let container, container.status == .running, let live = container.container {
+                stats.start(container: live)
+            } else {
+                stats.stop()
+            }
+        }
+        .onDisappear { stats.stop() }
     }
 
     private var canAddPort: Bool {
